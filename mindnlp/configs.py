@@ -17,6 +17,7 @@ Global configs
 """
 import os
 from packaging import version
+
 import mindspore
 from mindspore._c_expression import MSContext # pylint: disable=no-name-in-module, import-error
 
@@ -28,6 +29,7 @@ SUPPORT_VIEW = GENERATOR_SEED
 SUPPORT_BF16 = GENERATOR_SEED and '910b' in SOC
 ON_ORANGE_PI = '310b' in SOC
 USE_PYBOOST = version.parse(mindspore.__version__) >= version.parse('2.3.0') and DEVICE_TARGET == 'Ascend'
+CPU_BOOST = False
 DEFAULT_DTYPE = mindspore.float32
 
 WEIGHTS_NAME = "mindspore_model.ckpt"
@@ -53,6 +55,7 @@ ADAPTER_SAFE_WEIGHTS_NAME = "adapter_model.safetensors"
 DEFAULT_ROOT = os.path.join(os.getcwd(), ".mindnlp")
 # for modelscope models
 MS_URL_BASE = "https://modelscope.cn/api/v1/models/{}/repo?Revision={}&FilePath={}"
+CPU_KERNEL_OBS_PATH="https://mindspore-ai-contest.obs.cn-southwest-2.myhuaweicloud.com/kernels"
 # for huggingface url
 HF_ENDPOINT = os.environ.get('HF_ENDPOINT', 'https://hf-mirror.com')
 HF_URL_BASE = HF_ENDPOINT + '/{}/resolve/{}/{}?download=true'
@@ -63,6 +66,7 @@ MINDNLP_CACHE = os.getenv("MINDNLP_CACHE", DEFAULT_ROOT)
 REPO_TYPE_DATASET = "dataset"
 REPO_TYPE_MODEL = "model"
 REPO_TYPES = [None, REPO_TYPE_MODEL, REPO_TYPE_DATASET]
+
 
 # Token
 HF_TOKEN = os.environ.get('HF_TOKEN', None)
@@ -83,3 +87,13 @@ def set_pyboost(mode: bool):
 def use_pyboost():
     """set global pyboost"""
     return USE_PYBOOST
+
+def set_cpu_boost(mode: bool):
+    """set global pyboost"""
+    global CPU_BOOST
+    CPU_BOOST = mode
+    
+
+def cpu_boost():
+    """set global pyboost"""
+    return CPU_BOOST

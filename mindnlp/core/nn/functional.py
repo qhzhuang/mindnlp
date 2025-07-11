@@ -1,15 +1,25 @@
 """nn functional"""
+import os
 import math
 import warnings
 from typing import Optional, Tuple, List
 import numpy as np
 import mindspore
+import threading
 from mindspore import ops, Tensor
 from mindspore.ops._primitive_cache import _get_cache_prim
 from mindspore.ops.function.random_func import _get_seed, _set_prim_op_user_data
 from mindspore.ops.operations import nn_ops
+from mindnlp.utils.download import check_and_download_kernel_files
 
-from mindnlp.configs import DEVICE_TARGET, ON_ORANGE_PI, use_pyboost
+
+from mindnlp.configs import (
+    DEVICE_TARGET,
+    ON_ORANGE_PI,
+    use_pyboost,
+    MINDNLP_CACHE,
+    cpu_boost,
+)
 
 def gelu(input, approximate='none'):
     if use_pyboost():
@@ -167,7 +177,50 @@ def drop_and_mask(keep_prob, seed=None):
     out, mask = dropout_op(input)
     return out, mask
 
+
 dense_ = ops.Dense()
+_CPU_OPERATOR_REGISTRY = {"kernel_files_downloaded": False}
+_REGISTRY_LOCK = threading.Lock()
+
+
+def get_cpu_operator(op_name, *args, **kwargs):
+    """通用算子工厂函数：按需加载并返回实例"""
+    if not cpu_boost():
+        raise Error("CPU_BOOST must be True when calling get_cpu_operator")
+    if not _CPU_OPERATOR_REGISTRY["kernel_files_downloaded"]:  #
+        with _REGISTRY_LOCK:
+            if not _CPU_OPERATOR_REGISTRY["kernel_files_downloaded"]:
+                check_and_download_kernel_files()
+                _CPU_OPERATOR_REGISTRY["kernel_files_downloaded"] = True
+                # try:
+                #     check_and_download_kernel_files()
+                #     _CPU_OPERATOR_REGISTRY["kernel_files_downloaded"] = True
+                # except Exception as e:
+                #     print(f"Got Exception when downloading kernel files:\n{e}")
+    if op_name not in _CPU_OPERATOR_REGISTRY:
+        with _REGISTRY_LOCK:
+            if op_name not in _CPU_OPERATOR_REGISTRY:
+                try:
+                    so_path = os.path.join(
+                        MINDNLP_CACHE, "kernels", "libms_op_plugin.so"
+                    )
+                    custom_op = ops.Custom(
+                        f"{so_path}:{op_name}",  # .so路径:函数名
+                        out_shape=lambda x_shape, w_shape, *_: (
+                            (x_shape[0], x_shape[1], w_shape[0])
+                            if len(x_shape) == 3
+                            else (x_shape[0], w_shape[0])
+                        ),
+                        out_dtype=lambda *dtypes: dtypes[-1],
+                        func_type="aot",  # 指定AOT类型
+                    )
+                    _CPU_OPERATOR_REGISTRY[op_name] = custom_op
+                    print(f"Load {op_name} from {so_path}")
+                except Exception as e:
+                    print(f"Got Exception when getting op_name {op_name}:\n{e}")
+    return _CPU_OPERATOR_REGISTRY[op_name]
+
+
 def linear(input, weight, bias=None):
     if ON_ORANGE_PI:
         input = input.to(mindspore.float16)
@@ -178,6 +231,13 @@ def linear(input, weight, bias=None):
         return dense_(input, weight)
     if use_pyboost():
         return mindspore.mint.nn.functional.linear(input, weight, bias)
+    if cpu_boost():
+        custom_dense = get_cpu_operator('Dense')
+        return (
+            custom_dense(input, weight, bias)
+            if bias is not None
+            else custom_dense(input, weight)
+        )
     return dense_(input, weight, bias)
 
 

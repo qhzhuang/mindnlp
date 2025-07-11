@@ -33,8 +33,16 @@ from tqdm.autonotebook import tqdm
 import requests
 from requests.exceptions import ProxyError, SSLError, HTTPError
 
-from mindnlp.configs import DEFAULT_ROOT, ENV_VARS_TRUE_VALUES, MINDNLP_CACHE, REPO_TYPES, HF_URL_BASE, \
-    HF_TOKEN, MS_URL_BASE
+from mindnlp.configs import (
+    DEFAULT_ROOT,
+    ENV_VARS_TRUE_VALUES,
+    MINDNLP_CACHE,
+    REPO_TYPES,
+    HF_URL_BASE,
+    HF_TOKEN,
+    MS_URL_BASE,
+    CPU_KERNEL_OBS_PATH,
+)
 from .errors import (
     EntryNotFoundError,
     LocalEntryNotFoundError,
@@ -43,7 +51,7 @@ from .errors import (
     GatedRepoError,
     OfflineModeIsEnabled,
     RevisionNotFoundError,
-    raise_for_status
+    raise_for_status,
 )
 from . import logging
 
@@ -52,7 +60,9 @@ logger = logging.get_logger(__name__)
 _CACHED_NO_EXIST = object()
 _CACHED_NO_EXIST_T = Any
 
-_is_offline_mode = os.environ.get("MINDNLP_OFFLINE", "0").upper() in ENV_VARS_TRUE_VALUES
+_is_offline_mode = (
+    os.environ.get("MINDNLP_OFFLINE", "0").upper() in ENV_VARS_TRUE_VALUES
+)
 
 def is_offline_mode():
     """
@@ -162,7 +172,7 @@ def threads_exclusive_http_get(url, storage_folder=None, md5sum=None, download_f
             fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-def http_get(url, path=None, md5sum=None, download_file_name=None, proxies=None, headers=None):
+def http_get(url, path=None, md5sum=None, download_file_name=None, proxies=None, headers=None,retry_limit=5):
     r"""
     Download from given url, save to path.
 
@@ -192,7 +202,6 @@ def http_get(url, path=None, md5sum=None, download_file_name=None, proxies=None,
         os.makedirs(path)
 
     retry_cnt = 0
-    retry_limit = 5
     chunk_size = 1024
     total_size = 0
 
@@ -1069,3 +1078,42 @@ def convert_file_size_to_int(size: Union[int, str]):
         int_size = int(size[:-2]) * (10**3)
         return int_size // 8 if size.endswith("b") else int_size
     raise ValueError("`size` is not in a valid format. Use an integer followed by the unit, e.g., '5GB'.")
+
+def check_and_download_kernel_files():
+    import platform
+
+    # if on linux and cpu is x86
+    if platform.system().lower() == "linux" and os.uname().machine == "x86_64":
+        # torch 2.6
+        # files_md5sum = {
+        #     "libc10.so": "b68e32ce210fee8b5ff8cd2f2233b21e",
+        #     "libgomp-a34b3233.so.1": "50fe58ae0cde379f9337cee01f639d36",
+        #     "libms_op_plugin.so": "a3f158437e2d8bbf3ca672fdc740fe09",
+        #     "libtorch_cpu.so": "fcb5950991b76b2dadc3c0c0769cd7a2"
+        # }
+        files_md5sum = {
+            "libc10.so": "b28a14ec6e10f05607d6460db283cd84",
+            "libms_op_plugin.so": "565ae1520b99670b8a8ce2740c5a3286",
+            "libtorch_cpu.so": "613c60ddf00fa063371d3445d1da52dd",
+        }
+    elif platform.system().lower() == "windows" and os.uname().machine == "x86_64":
+        files_md5sum = {}
+        raise Exception("Not support on Windows yet!!!!")
+    else:
+        raise ValueError(
+            "Unsupported system or cpu type: {}, {}".format(
+                platform.system(), os.uname().machine
+            )
+        )
+    for file, md5sum in files_md5sum.items():
+        os.makedirs(os.path.join(MINDNLP_CACHE, "kernels"), exist_ok=True)
+        http_get(
+            url=f"{CPU_KERNEL_OBS_PATH}/{file}",
+            path=os.path.join(MINDNLP_CACHE, "kernels"),
+            download_file_name=file,
+            md5sum=md5sum,
+            headers={},
+            retry_limit=100,
+        )
+        # print("Successfully downloaded {} to {}".format(file, os.path.join(MINDNLP_CACHE,"kernels")))
+    return True
